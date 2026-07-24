@@ -1,7 +1,7 @@
 {
   "name": "@georgebashi/pi-retry",
   "version": "0.1.1",
-  "description": "pi extension: auto-retry transient streaming errors + /retry command",
+  "description": "pi extension: fallback retries for assistant errors + manual retry commands",
   "keywords": [
     "pi-package",
     "retry",
@@ -15,6 +15,9 @@
     "url": "git+https://github.com/georgebashi/pi-retry.git"
   },
   "type": "module",
+  "scripts": {
+    "test": "bun test"
+  },
   "files": [
     "index.ts",
     "README.md",

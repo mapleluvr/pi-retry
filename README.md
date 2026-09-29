@@ -1,6 +1,6 @@
 # pi-retry
 
-A [pi](https://github.com/badlogic/pi) extension that retries failed LLM responses automatically, manually via `/retry`, or by pressing Enter.
+A [pi](https://github.com/badlogic/pi) extension that retries failed LLM responses automatically, manually via `/retry`, or by pressing Enter — with an optional fixed-interval mode.
 
 ## Features
 
@@ -13,6 +13,8 @@ When an assistant response ends with an error that pi's built-in retry does not 
 - **No history pollution:** The failed response is invisible to the model (pi's `transform-messages` strips aborted/errored assistant messages). The retry trigger uses `display: false` so it is hidden in the TUI.
 
 Errors already covered by pi's built-in retry (overload, rate limits, connection errors, 5xx responses, and similar failures) stay with pi so the two retry budgets do not stack. Context overflow stays with pi's compaction recovery. User-initiated aborts (ESC) are never auto-retried; use `/retry` or Enter for those.
+
+To decide what "covered by pi" means, the extension mirrors pi's own error classifier **token for token** rather than keeping a looser allowlist. This matters: if the skip set were narrower than pi's, a single error (for example `getaddrinfo ENOTFOUND`) would be retried by *both* pi and this extension, consuming both budgets for one failure. Quota and billing errors are never retried by either side.
 
 ### Retry count: `/retry-count`
 
@@ -39,6 +41,52 @@ Usage:
 ```
 
 The count is the number of extra retries after the initial request. Changing the value updates pi's own setting, preserves the other settings fields, and reloads pi resources automatically. Because this is the shared pi setting, it controls both pi's built-in retries and this extension's fallback retries.
+
+### Fast-Retry: fixed-interval retries
+
+By default retries use exponential backoff (2s, 4s, 8s, …). Fast-Retry replaces that with a **fixed interval**: retry every T seconds, up to N times.
+
+```text
+/fast-retry                  # Show status, effective values, and the full guide
+/fast-retry on 5 10          # Retry every 5s, up to 10 times
+/fast-retry off              # Restore the normal exponential backoff
+```
+
+`T` is a whole number of seconds (1–600). `N` is an **independent** retry budget (a non-negative integer) — it does not reuse `retry.maxRetries`. The first retry also waits the full T seconds. The setting persists in `~/.pi/agent/settings.json`.
+
+Fast-Retry covers the same errors as pi's built-in retry — 429, 503, timeouts, overload, and network failures — because it **reconfigures** that retry instead of replacing it.
+
+#### Two conditions
+
+**1. `retry.enabled` must be truthy.** Fast-Retry works by reconfiguring pi's built-in retry, not by disabling it. `/fast-retry on 5 10` writes:
+
+```json
+{
+  "retry": {
+    "enabled": true,
+    "maxRetries": 10,
+    "baseDelayMs": 5000,
+    "maxAgentDelayMs": 5000
+  }
+}
+```
+
+pi computes `min(baseDelayMs * 2^(attempt-1), maxAgentDelayMs)`. With the base equal to the cap, every attempt waits exactly T seconds — that is how the binary growth is removed. Because Fast-Retry *depends* on pi's retry loop, `/fast-retry on` is **refused** while `retry.enabled` is falsy (`false`, `0`, or `""`); enable retries first (e.g. `/retry-count 3`).
+
+**2. Nothing may override those keys in the effective scope.** pi deep-merges the global settings file with a trusted project's `.pi/settings.json`, and the project wins on conflicting keys. If the project file also sets `retry.baseDelayMs`, `retry.maxAgentDelayMs`, or `retry.maxRetries`, your Fast-Retry values are overridden. Running `/fast-retry` with no arguments prints the **effective** values and, for each one, which scope supplied it:
+
+```text
+Effective: maxRetries=5 (global), baseDelayMs=5000 (global), maxAgentDelayMs=5000 (global), enabled=true (global)
+```
+
+`/fast-retry on` re-reads the merged result afterwards and warns if a scope defeated the new configuration; a running session also warns once if the effective config stops matching.
+
+#### Notes
+
+- `retry.provider.maxRetries` is a **separate**, provider-level retry loop that runs below pi's agent retry. Fast-Retry does not touch it; leaving it at `0` is recommended.
+- The `retry.maxRetries` / `baseDelayMs` / `maxAgentDelayMs` keys are shared with pi's **summarization** retries (compaction, branch summaries, bug reports). Fast-Retry therefore applies to those too: in Fast-Retry mode a summary retry waits T seconds and gets N attempts. Keep `N × T` reasonable — `N=10, T=60` lets a summary retry occupy up to 10 minutes.
+- `/fast-retry off` restores those keys from a snapshot taken when Fast-Retry was enabled, and removes its marker. It only touches files carrying that marker, so your own `retry.*` values are never disturbed. If you edited those four keys by hand *while* Fast-Retry was on, `off` restores the pre-`on` values and discards your edit.
+- `/fast-retry on` and `/fast-retry off` reload pi resources, so both are refused while the agent is running.
 
 ### Manual retry: `/retry`
 
@@ -86,11 +134,11 @@ Every retry attempt is logged to `~/.pi/logs/pi-retry.jsonl` with:
 - Attempt number and delay
 - Working directory and session ID
 
-Event types: `retry`, `retry_succeeded`, `retry_exhausted`, `manual_retry`.
+Event types: `retry`, `retry_succeeded`, `retry_exhausted`, `manual_retry`. Retry entries also carry `fastRetry` and, in Fast-Retry mode, `intervalSec`.
 
 ## How it works
 
-1. **`agent_end` event** — Checks whether the last assistant error is outside pi's built-in retry and compaction paths. If so, it waits with backoff and sends a hidden `sendMessage` with `triggerTurn: true`.
+1. **`agent_end` event** — Checks whether the last assistant error is outside pi's built-in retry and compaction paths. If so, it waits (exponential backoff, or a fixed T seconds in Fast-Retry mode) and sends a hidden `sendMessage` with `triggerTurn: true`.
 
 2. **`context` event** — Always strips historical hidden retry trigger messages before the LLM sees them. The aborted assistant message is already stripped by pi's `transform-messages`.
 
@@ -101,3 +149,5 @@ Event types: `retry`, `retry_succeeded`, `retry_exhausted`, `manual_retry`.
 5. **`turn_end` event** — Resets the retry counter when a successful response comes through.
 
 6. **`/retry-count` command** — Reads or updates pi's `retry.maxRetries`; updates call `ctx.reload()` before returning.
+
+7. **`/fast-retry` command** — Enables fixed-interval retries by reconfiguring pi's `retry.baseDelayMs`, `retry.maxAgentDelayMs`, and `retry.maxRetries`; `off` restores the pre-`on` snapshot. See the two conditions above.

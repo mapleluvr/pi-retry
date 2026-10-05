@@ -1,6 +1,88 @@
-# pi-retry
+![pi-retry](assets/pi-retry-title.png)
+
+<div align="center">
+
+*One extensions that help retries requests in more conditions.*
+
+<img src="https://img.shields.io/badge/version-0.1.1-EB0404?labelColor=181818" alt="Version: 0.1.1">
+<img src="https://img.shields.io/badge/type-Pi%20extension-181818" alt="type: Pi extension">
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-FDFDFD?labelColor=181818" alt="License: MIT"></a>
+
+<br>
+<br>
+
+<a href="#quick-start">Quick Start</a> ｜
+<a href="#core-idea">Core Idea</a> ｜
+<a href="#features">Features</a> ｜
+<a href="#logging">Logging</a> ｜
+<a href="#project-structure">Structure</a> ｜
+<a href="#support-and-boundaries">Boundaries</a>
+
+</div>
+
+---
 
 A [pi](https://github.com/badlogic/pi) extension that retries failed LLM responses automatically, manually via `/retry`, or by pressing Enter — with an optional fixed-interval mode.
+
+## Core Idea
+
+Keep the extension's fallback path distinct from Pi's built-in retry and compaction paths.
+
+| Failure or action | Owner / behavior |
+| --- | --- |
+| Built-in retryable error | Pi handles it; the fallback does not consume a second budget |
+| Unclassified assistant error | The extension retries within the configured fallback budget |
+| Context overflow | Pi's compaction recovery |
+| User abort | No automatic retry; use `/retry` or Enter |
+| Quota or billing error | Not retried by either side |
+
+> [!IMPORTANT]
+> Retry settings affect real provider requests. Fast-Retry also affects Pi's summarization retries. Check the effective scope and budget before enabling it.
+
+## Quick Start
+
+<a id="installation"></a>
+
+### 1. Load this checkout
+
+The package metadata still names `@georgebashi/pi-retry` and the upstream
+`georgebashi/pi-retry` repository. To use the implementation documented in this
+checkout, install its local path:
+
+```bash
+pi install /path/to/pi-retry
+```
+
+Review the extension before loading it and reopen Pi after installation.
+
+### Upstream npm package
+
+The original upstream installation command is:
+
+```bash
+pi install npm:@georgebashi/pi-retry
+```
+
+That command selects the upstream npm release, not this checkout. Do not assume
+it contains this fork's retry-count and Fast-Retry changes.
+
+### For development/testing
+
+```bash
+pi -e /path/to/pi-retry/index.ts
+```
+
+### 2. Inspect settings before changing them
+
+In Pi, these commands show the current configuration without changing the retry mode:
+
+```text
+/retry-count
+/fast-retry
+```
+
+After an error or abort, use `/retry` for an explicit retry. To enable a fixed interval,
+see [Fast-Retry](#fast-retry-fixed-interval-retries) and its two preconditions below.
 
 ## Features
 
@@ -105,26 +187,6 @@ This works by intercepting raw terminal input via pi's `onTerminalInput` hook. T
 
 Otherwise Enter behaves normally — including when a model selector, confirm dialog, session picker, or any other modal UI is displayed.
 
-## Installation
-
-### As a pi package (recommended)
-
-```bash
-pi install npm:@georgebashi/pi-retry
-```
-
-Or from a local checkout:
-
-```bash
-pi install /path/to/pi-retry
-```
-
-### For development/testing
-
-```bash
-pi -e /path/to/pi-retry/index.ts
-```
-
 ## Logging
 
 Every retry attempt is logged to `~/.pi/logs/pi-retry.jsonl` with:
@@ -151,3 +213,47 @@ Event types: `retry`, `retry_succeeded`, `retry_exhausted`, `manual_retry`. Retr
 6. **`/retry-count` command** — Reads or updates pi's `retry.maxRetries`; updates call `ctx.reload()` before returning.
 
 7. **`/fast-retry` command** — Enables fixed-interval retries by reconfiguring pi's `retry.baseDelayMs`, `retry.maxAgentDelayMs`, and `retry.maxRetries`; `off` restores the pre-`on` snapshot. See the two conditions above.
+
+## Project Structure
+
+```text
+pi-retry/
+├── index.ts                 # Retry policy, commands, settings and logging
+├── index.test.ts            # Bun regression tests
+├── docs/fast-retry-plan.md   # Fixed-interval design and compatibility notes
+├── LICENSE
+└── assets/                  # README title artwork
+```
+
+## Support and Boundaries
+
+- This extension depends on Pi's retry classifier, settings semantics and extension hooks; review those contracts when updating Pi.
+- Empty-editor Enter retry requires terminal focus, an idle agent and a last response that failed or was aborted.
+- Trusted project settings can override global retry keys; the status commands report the effective values and source.
+- Fast-Retry does not reconfigure `retry.provider.maxRetries`, the separate provider-level loop.
+- The npm package metadata retains the upstream identity; use this checkout to evaluate its documented changes.
+
+## Design and Development
+
+The [Fast-Retry design](docs/fast-retry-plan.md) records the mechanism and compatibility assumptions.
+
+With Bun available, run the repository test command:
+
+```bash
+npm test
+```
+
+`npm test` invokes `bun test`; this package defines no build or typecheck script.
+Tests are not proof of live provider availability or successful application-level work.
+
+## License
+
+[MIT](LICENSE). Upstream package attribution remains George Bashi; this README does not change package ownership.
+
+---
+
+<div align="center">
+
+**Retry deliberately. Inspect the effective budget.**
+
+</div>
